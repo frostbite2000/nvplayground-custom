@@ -3,7 +3,7 @@
 /* 
     NVPlayground
     Copyright © 2025 starfrost
-    Linux port by frostbite2000 (2025-04-25)
+    Linux port by frostbite2000 (2025-04-25 06:10:05)
 
     Raw GPU programming for early Nvidia GPUs
 */

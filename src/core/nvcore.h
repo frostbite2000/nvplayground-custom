@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include "nvplayground.h"
 
+// Forward declarations of architecture-specific init functions
+// This resolves the "undeclared function" error
+bool nv3_init(void);  // NV3/NV3T initialization function
+
 // Function prototypes for device initialization
 typedef bool (*init_function_t)(void);
 typedef bool (*shutdown_function_t)(void);
