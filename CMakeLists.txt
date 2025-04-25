@@ -22,37 +22,35 @@ if(NOT USE_VIRTUAL_PCI)
     include_directories(${LIBPCI_INCLUDE_DIRS})
 endif()
 
-file(GLOB sources CONFIGURE_DEPENDS 
-    # Main
-    "src/main.c"
-
-    # Core
-    "src/core/nvcore_detect.c"
-    "src/core/nvcore_io.c"
-
-    # PCI
-    "src/core/pci/linux_pci.c"
-    "src/core/pci/virtual_pci.c"
-
-    # Architecture: NV3
-    "src/architecture/nv3/nv3_core.c"
-    "src/architecture/nv3/nv3_mode_table.c"
+# Include directories
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-add_executable(nvplay ${sources})
+# Source files
+set(SOURCES
+    src/main.c
+    src/core/nvcore_detect.c
+    src/core/nvcore_io.c
+    src/core/pci/linux_pci.c
+    src/core/pci/virtual_pci.c
+    src/architecture/nv3/nv3_core.c
+    src/architecture/nv3/nv3_mode_table.c
+)
+
+add_executable(nvplay ${SOURCES})
 
 # Link with libpci only when not using virtual PCI
 if(NOT USE_VIRTUAL_PCI)
     target_link_libraries(nvplay ${LIBPCI_LIBRARIES})
 endif()
 
-# Base include directories
-include_directories("./src")
-
-# Copy assets
-add_custom_target(assets
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_CURRENT_SOURCE_DIR}/assets
-    ${CMAKE_BINARY_DIR}/assets
-)
-add_dependencies(nvplay assets)
+# Copy assets if they exist
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+    add_custom_target(assets
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/assets
+        ${CMAKE_BINARY_DIR}/assets
+    )
+    add_dependencies(nvplay assets)
+endif()
