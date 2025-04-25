@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <time.h>
 #include "architecture/nv3/nv3_ref.h"
+#include "architecture/nv3/nv3_state.h"
 #include "core/nvcore.h"
 #include "architecture/nv3/nv3.h"
 
@@ -16,6 +17,9 @@
 // Default clock settings
 #define NV3_TEST_OVERCLOCK_BASE_13500 0x01A30B
 #define NV3_TEST_OVERCLOCK_BASE_14318 0x01C40E
+
+// Global state for the NV3 GPU
+static nv3_state_t nv3_state;
 
 /* TEMPORARY test function to test certain hardcoded overclocks */
 bool nv3_init_test_overclock(void)
@@ -39,6 +43,9 @@ bool nv3_init_test_overclock(void)
     if ((straps >> NV3_PSTRAPS_CRYSTAL) & 0x01) {
         clock_base = 14318180.0f;
         is_14318mhz_clock = true; 
+        nv3_state.crystal_freq = 14318; // 14.318 MHz
+    } else {
+        nv3_state.crystal_freq = 13500; // 13.5 MHz
     }
         
     /* We vary the n-parameter of the MCLK to fine-tune the GPU clock speed */
@@ -64,6 +71,7 @@ bool nv3_init_test_overclock(void)
         printf("Trying MCLK = %.2f Mhz (NV_PRAMDAC_MPLL_COEFF = 0x%08X)...\n", megahertz, final_clock);
 
         nv_mmio_write32(NV3_PRAMDAC_CLOCK_MEMORY, final_clock);
+        nv3_state.mpll = final_clock;
 
         // Sleep for the specified interval
         sleep(NV3_TEST_OVERCLOCK_TIME_BETWEEN_RECLOCKS);
@@ -72,10 +80,13 @@ bool nv3_init_test_overclock(void)
     printf("We survived. Returning to 100Mhz...\n");
     
     /* restore original clock */
-    if (is_14318mhz_clock)
+    if (is_14318mhz_clock) {
         nv_mmio_write32(NV3_PRAMDAC_CLOCK_MEMORY, NV3_TEST_OVERCLOCK_BASE_14318);
-    else
+        nv3_state.mpll = NV3_TEST_OVERCLOCK_BASE_14318;
+    } else {
         nv_mmio_write32(NV3_PRAMDAC_CLOCK_MEMORY, NV3_TEST_OVERCLOCK_BASE_13500);
+        nv3_state.mpll = NV3_TEST_OVERCLOCK_BASE_13500;
+    }
 
     return true; 
 }
@@ -101,6 +112,9 @@ bool nv3_init(void)
 
     current_device.nv_pmc_boot_0 = nv_mmio_read32(NV3_PMC_BOOT);
     current_device.nv_pfb_boot_0 = nv_mmio_read32(NV3_PFB_BOOT);
+    
+    // Initialize NV3 state structure
+    nv3_state.revision = current_device.nv_pmc_boot_0;
 
     printf("I'm a Riva 128! Information: \n");
     printf("NV_PMC_BOOT_0           = 0x%08X\n", current_device.nv_pmc_boot_0);
@@ -111,16 +125,26 @@ bool nv3_init(void)
     bool ram_extension_8mb = (current_device.nv_pfb_boot_0 >> NV3_PFB_BOOT_RAM_EXTENSION) & 0x01;
     
     /* Read in the amount of video memory from the NV_PFB_BOOT_0 register */
-    if (!ram_amount_value && ram_extension_8mb == NV3_PFB_BOOT_RAM_EXTENSION_8MB)       // 8MB (Riva 128 ZX)
+    if (!ram_amount_value && ram_extension_8mb == NV3_PFB_BOOT_RAM_EXTENSION_8MB) {      // 8MB (Riva 128 ZX)
         current_device.vram_amount = NV3_VRAM_SIZE_8MB;
-    else if (ram_amount_value == NV3_PFB_BOOT_RAM_AMOUNT_4MB)                           // 4MB (Most Riva 128s)
+        nv3_state.vram_size = NV3_VRAM_SIZE_8MB;
+    } else if (ram_amount_value == NV3_PFB_BOOT_RAM_AMOUNT_4MB) {                       // 4MB (Most Riva 128s)
         current_device.vram_amount = NV3_VRAM_SIZE_4MB;
-    else if (ram_amount_value == NV3_PFB_BOOT_RAM_AMOUNT_2MB)                           // 2MB (Single NEC card)
+        nv3_state.vram_size = NV3_VRAM_SIZE_4MB;
+    } else if (ram_amount_value == NV3_PFB_BOOT_RAM_AMOUNT_2MB) {                       // 2MB (Single NEC card)
         current_device.vram_amount = NV3_VRAM_SIZE_2MB;
-    else if (!ram_amount_value && ram_extension_8mb == NV3_PFB_BOOT_RAM_EXTENSION_NONE) // 1MB (never existed)
+        nv3_state.vram_size = NV3_VRAM_SIZE_2MB;
+    } else if (!ram_amount_value && ram_extension_8mb == NV3_PFB_BOOT_RAM_EXTENSION_NONE) { // 1MB (never existed)
         current_device.vram_amount = NV3_VRAM_SIZE_1MB;
+        nv3_state.vram_size = NV3_VRAM_SIZE_1MB;
+    }
+
+    // Read the VRAM bus width
+    uint32_t ram_width_value = (current_device.nv_pfb_boot_0 >> NV3_PFB_BOOT_RAM_WIDTH) & 0x01;
+    nv3_state.vram_width = (ram_width_value == NV3_PFB_BOOT_RAM_WIDTH_128) ? 128 : 64;
 
     printf("Video RAM Size          = %u MB\n", (unsigned int)(current_device.vram_amount / 1048576));
+    printf("Video RAM Bus Width     = %u bit\n", nv3_state.vram_width);
 
     /* Read in the straps */
     current_device.straps = nv_mmio_read32(NV3_PSTRAPS);
@@ -129,18 +153,30 @@ bool nv3_init(void)
     uint32_t vpll = nv_mmio_read32(NV3_PRAMDAC_CLOCK_PIXEL);
     uint32_t mpll = nv_mmio_read32(NV3_PRAMDAC_CLOCK_MEMORY);
     
+    // Store clock information in state
+    nv3_state.vpll = vpll;
+    nv3_state.mpll = mpll;
+    
     printf("Pixel Clock Coefficient = 0x%08X\n", vpll);
     printf("Memory Clock Coefficient= 0x%08X\n", mpll);
 
     /* Power up all GPU subsystems */
     printf("Enabling all GPU subsystems (0x11111111 -> NV3_PMC_ENABLE)...");
     nv_mmio_write32(NV3_PMC_ENABLE, 0x11111111);
+    nv3_state.enabled_subsystems = 0x11111111;
     printf("Done!\n");
 
     /* Enable interrupts */
     printf("Enabling interrupts...");
     nv_mmio_write32(NV3_PMC_INTERRUPT_ENABLE, (NV3_PMC_INTERRUPT_ENABLE_HARDWARE | NV3_PMC_INTERRUPT_ENABLE_SOFTWARE));
     printf("Done!\n");
+ 
+    // Set default mode (640x480x16 @ 60Hz)
+    nv3_state.current_mode = mode_table[NV3_MODE_640x480x16];
+    printf("Default mode set to %dx%dx%d\n", 
+           nv3_state.current_mode.width,
+           nv3_state.current_mode.height,
+           nv3_state.current_mode.bpp);
  
     if (nv3_init_test_overclock())
         printf("Passed clock stability test\n");

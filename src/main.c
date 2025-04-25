@@ -31,12 +31,15 @@ int main(int argc, char *argv[])
     signal(SIGTERM, signal_handler);
     
     // Print welcome message
+    printf("\n\n");
+    printf("=================================================================\n");
     printf(APP_SIGNON_STRING);
+    printf("=================================================================\n\n");
 
 #ifdef USE_VIRTUAL_PCI    
-    printf("Running with virtual PCI device (no hardware access)\n");
+    printf("Running with virtual PCI device (no hardware access)\n\n");
 #else
-    printf("Running with real hardware PCI access\n");
+    printf("Running with real hardware PCI access\n\n");
 #endif
 
     // Initialize PCI subsystem

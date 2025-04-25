@@ -1,145 +1,315 @@
-#include "nv3.h"
+/*
+ * Filename: nv3_mode_table.c
+ * Purpose: Mode table for the NV3/NV3T GPU
+ * Date: 2025-04-25
+ */
 
-/* 
-    List of supported modes
-    For now: Just 60Hz modes 
+#include "architecture/nv3/nv3_state.h"
+#include "architecture/nv3/nv3_ref.h"
 
-    Does 24bpp exist?
-*/
+// Mode table for common resolutions supported by the NV3/NV3T
 nv3_mode_entry_t mode_table[] =
 {
-    /* 320*200 */
-    { 320, 200, 8, 60 },
-    { 320, 200, 15, 60 },
-    { 320, 200, 16, 60 },
-    { 320, 200, 32, 60 },
-
-    /* 320*240 */
-    { 320, 240, 8, 60 },
-    { 320, 240, 15, 60 },
-    { 320, 240, 16, 60 },
-    { 320, 240, 32, 60 },
-
-    /* 320*400 */
-    { 320, 400, 8, 60 },
-    { 320, 400, 15, 60 },
-    { 320, 400, 16, 60 },
-    { 320, 400, 32, 60 },
-    { 320, 400, 8, 60 },
-    { 320, 400, 15, 60 },
-    { 320, 400, 16, 60 },
-    { 320, 400, 32, 60 },
-
-    /* 400*300 */
-    { 400, 300, 8, 60 },
-    { 400, 300, 15, 60 },
-    { 400, 300, 16, 60 },
-    { 400, 300, 32, 60 },
-
-    /* 480*360 */
-    { 480, 360, 8, 60 },
-    { 480, 360, 15, 60 },
-    { 480, 360, 16, 60 },
-    { 480, 360, 32, 60 },
-
-    /* 512*384 */
-    { 512, 384, 8, 60 },
-    { 512, 384, 15, 60 },
-    { 512, 384, 16, 60 },
-    { 512, 384, 32, 60 },
-
-    /* 640*400 */
-    { 640, 400, 8, 60 },
-    { 640, 400, 15, 60 },
-    { 640, 400, 16, 60 },
-    { 640, 400, 32, 60 },
-
-    /* 640*480 (TEST for non-60hz and 24BPP)*/
-    { 640, 480, 8, 60 },
-    { 640, 480, 15, 60 },
-    { 640, 480, 16, 60 },
-    { 640, 480, 24, 60 }, /* 24bpp test mode */
-    /* Experiment for out of spec low refresh rates */
-    { 640, 480, 32, 1 }, 
-    { 640, 480, 32, 15 }, 
-    { 640, 480, 32, 24 }, 
-    { 640, 480, 32, 30 }, 
-    { 640, 480, 32, 45 }, 
-    { 640, 480, 32, 60 },
-    /* Experiment for high but in-spec refresh rates */
-    { 640, 480, 32, 72 },
-    { 640, 480, 32, 75 },
-    { 640, 480, 32, 85 },
-    { 640, 480, 32, 100 },
-    { 640, 480, 32, 120 },
-    /* Experimental out of spec high refresh rates */
-    { 640, 480, 32, 150 },
-    { 640, 480, 32, 175 },
-    { 640, 480, 32, 200 },
+    // 640x480x8 @ 60Hz
+    {
+        .width = 640,
+        .height = 480,
+        .bpp = 8,
+        .refresh_rate = 60,
+        
+        .horizontal_total = 800,
+        .horizontal_display_end = 640,
+        .horizontal_blank_start = 640,
+        .horizontal_blank_end = 800,
+        .horizontal_retrace_start = 656,
+        .horizontal_retrace_end = 752,
+        
+        .vertical_total = 525,
+        .vertical_display_end = 480,
+        .vertical_blank_start = 480,
+        .vertical_blank_end = 525,
+        .vertical_retrace_start = 490,
+        .vertical_retrace_end = 492,
+        
+        .pixel_clock = 25175,
+        .memory_clock = 0x0EC40E,  // 100MHz default
+    },
     
-    /* 800*600 */
-    { 800, 600, 8, 60 },
-    { 800, 600, 15, 60 },
-    { 800, 600, 16, 60 },
-    { 800, 600, 32, 60 }, 
-
-    /* 960*720 (NV3 - max 3d resolution) */
-    { 960, 720, 8, 60 },
-    { 960, 720, 15, 60 },
-    { 960, 720, 16, 60 },
-    { 960, 720, 32, 60 }, 
-
-    /* 1024*768 */
-    { 1024, 768, 8, 60 },
-    { 1024, 768, 15, 60 },
-    { 1024, 768, 16, 60 },
-    { 1024, 768, 32, 60 }, 
-
-    /* 1152*864 */
-    { 1152, 864, 8, 60 },
-    { 1152, 864, 15, 60 },
-    { 1152, 864, 16, 60 },
-    { 1152, 864, 32, 60 }, 
-
-    /* 1280*1024 */
-    { 1280, 1024, 8, 60 },
-    { 1280, 1024, 15, 60 },
-    { 1280, 1024, 16, 60 },
-    { 1280, 1024, 32, 60 }, 
-
-    /* 1600*1024 */
-    { 1600, 1024, 8, 60 },
-    { 1600, 1024, 15, 60 },
-    { 1600, 1024, 16, 60 },
-    { 1600, 1024, 32, 60 }, 
+    // 640x480x16 @ 60Hz
+    {
+        .width = 640,
+        .height = 480,
+        .bpp = 16,
+        .refresh_rate = 60,
+        
+        .horizontal_total = 800,
+        .horizontal_display_end = 640,
+        .horizontal_blank_start = 640,
+        .horizontal_blank_end = 800,
+        .horizontal_retrace_start = 656,
+        .horizontal_retrace_end = 752,
+        
+        .vertical_total = 525,
+        .vertical_display_end = 480,
+        .vertical_blank_start = 480,
+        .vertical_blank_end = 525,
+        .vertical_retrace_start = 490,
+        .vertical_retrace_end = 492,
+        
+        .pixel_clock = 25175,
+        .memory_clock = 0x0EC40E,  // 100MHz default
+    },
     
-    /* 1600*1200 */
-    { 1600, 1200, 8, 60 },
-    { 1600, 1200, 15, 60 },
-    { 1600, 1200, 16, 60 },
-    { 1600, 1200, 32, 60 }, 
-
-    /* 1800*1440 */
-    { 1800, 1440, 8, 60 },
-    { 1800, 1440, 15, 60 },
-    { 1800, 1440, 16, 60 },
-
-    /* 1920*1080 */
-    { 1920, 1080, 8, 60 },
-    { 1920, 1080, 15, 60 },
-    { 1920, 1080, 16, 60 },
-    { 1920, 1080, 32, 60 },
+    // 640x480x32 @ 60Hz
+    {
+        .width = 640,
+        .height = 480,
+        .bpp = 32,
+        .refresh_rate = 60,
+        
+        .horizontal_total = 800,
+        .horizontal_display_end = 640,
+        .horizontal_blank_start = 640,
+        .horizontal_blank_end = 800,
+        .horizontal_retrace_start = 656,
+        .horizontal_retrace_end = 752,
+        
+        .vertical_total = 525,
+        .vertical_display_end = 480,
+        .vertical_blank_start = 480,
+        .vertical_blank_end = 525,
+        .vertical_retrace_start = 490,
+        .vertical_retrace_end = 492,
+        
+        .pixel_clock = 25175,
+        .memory_clock = 0x0EC40E,  // 100MHz default
+    },
     
-    /* 1920*1200 */
-    { 1920, 1200, 8, 60 },
-    { 1920, 1200, 15, 60 },
-    { 1920, 1200, 16, 60 },
-
-    /* Experimental modes for extreme hardware testing */
-    { 2048, 1536, 8, 60 },          /* Theoretical PFB maximum resolution */
-
-    /* Invalid modes larger than the size of the NV3T VRAM, to see what the GPU does */
-    { 1920, 1200, 32, 60 },
-    { 1800, 1440, 32, 60 }, 
+    // 800x600x8 @ 60Hz
+    {
+        .width = 800,
+        .height = 600,
+        .bpp = 8,
+        .refresh_rate = 60,
+        
+        .horizontal_total = 1056,
+        .horizontal_display_end = 800,
+        .horizontal_blank_start = 800,
+        .horizontal_blank_end = 1056,
+        .horizontal_retrace_start = 840,
+        .horizontal_retrace_end = 968,
+        
+        .vertical_total = 628,
+        .vertical_display_end = 600,
+        .vertical_blank_start = 600,
+        .vertical_blank_end = 628,
+        .vertical_retrace_start = 601,
+        .vertical_retrace_end = 605,
+        
+        .pixel_clock = 40000,
+        .memory_clock = 0x0EC40E,  // 100MHz default
+    },
     
+    // 800x600x16 @ 60Hz
+    {
+        .width = 800,
+        .height = 600,
+        .bpp = 16,
+        .refresh_rate = 60,
+        
+        .horizontal_total = 1056,
+        .horizontal_display_end = 800,
+        .horizontal_blank_start = 800,
+        .horizontal_blank_end = 1056,
+        .horizontal_retrace_start = 840,
+        .horizontal_retrace_end = 968,
+        
+        .vertical_total = 628,
+        .vertical_display_end = 600,
+        .vertical_blank_start = 600,
+        .vertical_blank_end = 628,
+        .vertical_retrace_start = 601,
+        .vertical_retrace_end = 605,
+        
+        .pixel_clock = 40000,
+        .memory_clock = 0x0EC40E,  // 100MHz default
+    },
+    
+    // 800x600x32 @ 60Hz
+    {
+        .width = 800,
+        .height = 600,
+        .bpp = 32,
+        .refresh_rate = 60,
+        
+        .horizontal_total = 1056,
+        .horizontal_display_end = 800,
+        .horizontal_blank_start = 800,
+        .horizontal_blank_end = 1056,
+        .horizontal_retrace_start = 840,
+        .horizontal_retrace_end = 968,
+        
+        .vertical_total = 628,
+        .vertical_display_end = 600,
+        .vertical_blank_start = 600,
+        .vertical_blank_end = 628,
+        .vertical_retrace_start = 601,
+        .vertical_retrace_end = 605,
+        
+        .pixel_clock = 40000,
+        .memory_clock = 0x0EC40E,  // 100MHz default
+    },
+    
+    // 1024x768x8 @ 60Hz
+    {
+        .width = 1024,
+        .height = 768,
+        .bpp = 8,
+        .refresh_rate = 60,
+        
+        .horizontal_total = 1344,
+        .horizontal_display_end = 1024,
+        .horizontal_blank_start = 1024,
+        .horizontal_blank_end = 1344,
+        .horizontal_retrace_start = 1048,
+        .horizontal_retrace_end = 1184,
+        
+        .vertical_total = 806,
+        .vertical_display_end = 768,
+        .vertical_blank_start = 768,
+        .vertical_blank_end = 806,
+        .vertical_retrace_start = 771,
+        .vertical_retrace_end = 777,
+        
+        .pixel_clock = 65000,
+        .memory_clock = 0x0EC40E,  // 100MHz default
+    },
+    
+    // 1024x768x16 @ 60Hz
+    {
+        .width = 1024,
+        .height = 768,
+        .bpp = 16,
+        .refresh_rate = 60,
+        
+        .horizontal_total = 1344,
+        .horizontal_display_end = 1024,
+        .horizontal_blank_start = 1024,
+        .horizontal_blank_end = 1344,
+        .horizontal_retrace_start = 1048,
+        .horizontal_retrace_end = 1184,
+        
+        .vertical_total = 806,
+        .vertical_display_end = 768,
+        .vertical_blank_start = 768,
+        .vertical_blank_end = 806,
+        .vertical_retrace_start = 771,
+        .vertical_retrace_end = 777,
+        
+        .pixel_clock = 65000,
+        .memory_clock = 0x0EC40E,  // 100MHz default
+    },
+    
+    // 1024x768x32 @ 60Hz
+    {
+        .width = 1024,
+        .height = 768,
+        .bpp = 32,
+        .refresh_rate = 60,
+        
+        .horizontal_total = 1344,
+        .horizontal_display_end = 1024,
+        .horizontal_blank_start = 1024,
+        .horizontal_blank_end = 1344,
+        .horizontal_retrace_start = 1048,
+        .horizontal_retrace_end = 1184,
+        
+        .vertical_total = 806,
+        .vertical_display_end = 768,
+        .vertical_blank_start = 768,
+        .vertical_blank_end = 806,
+        .vertical_retrace_start = 771,
+        .vertical_retrace_end = 777,
+        
+        .pixel_clock = 65000,
+        .memory_clock = 0x0EC40E,  // 100MHz default
+    },
+    
+    // 1280x1024x8 @ 60Hz
+    {
+        .width = 1280,
+        .height = 1024,
+        .bpp = 8,
+        .refresh_rate = 60,
+        
+        .horizontal_total = 1688,
+        .horizontal_display_end = 1280,
+        .horizontal_blank_start = 1280,
+        .horizontal_blank_end = 1688,
+        .horizontal_retrace_start = 1328,
+        .horizontal_retrace_end = 1440,
+        
+        .vertical_total = 1066,
+        .vertical_display_end = 1024,
+        .vertical_blank_start = 1024,
+        .vertical_blank_end = 1066,
+        .vertical_retrace_start = 1025,
+        .vertical_retrace_end = 1028,
+        
+        .pixel_clock = 108000,
+        .memory_clock = 0x0EC40E,  // 100MHz default
+    },
+    
+    // 1280x1024x16 @ 60Hz
+    {
+        .width = 1280,
+        .height = 1024,
+        .bpp = 16,
+        .refresh_rate = 60,
+        
+        .horizontal_total = 1688,
+        .horizontal_display_end = 1280,
+        .horizontal_blank_start = 1280,
+        .horizontal_blank_end = 1688,
+        .horizontal_retrace_start = 1328,
+        .horizontal_retrace_end = 1440,
+        
+        .vertical_total = 1066,
+        .vertical_display_end = 1024,
+        .vertical_blank_start = 1024,
+        .vertical_blank_end = 1066,
+        .vertical_retrace_start = 1025,
+        .vertical_retrace_end = 1028,
+        
+        .pixel_clock = 108000,
+        .memory_clock = 0x0EC40E,  // 100MHz default
+    },
+    
+    // 1280x1024x32 @ 60Hz
+    {
+        .width = 1280,
+        .height = 1024,
+        .bpp = 32,
+        .refresh_rate = 60,
+        
+        .horizontal_total = 1688,
+        .horizontal_display_end = 1280,
+        .horizontal_blank_start = 1280,
+        .horizontal_blank_end = 1688,
+        .horizontal_retrace_start = 1328,
+        .horizontal_retrace_end = 1440,
+        
+        .vertical_total = 1066,
+        .vertical_display_end = 1024,
+        .vertical_blank_start = 1024,
+        .vertical_blank_end = 1066,
+        .vertical_retrace_start = 1025,
+        .vertical_retrace_end = 1028,
+        
+        .pixel_clock = 108000,
+        .memory_clock = 0x0EC40E,  // 100MHz default
+    }
 };
+
+// Size of the mode table (number of entries)
+const int mode_table_size = sizeof(mode_table) / sizeof(nv3_mode_entry_t);

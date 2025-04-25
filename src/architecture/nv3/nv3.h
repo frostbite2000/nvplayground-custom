@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "architecture/nv3/nv3_state.h"
 
 // NV3 initialization function
 bool nv3_init(void);

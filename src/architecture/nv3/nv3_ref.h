@@ -4,10 +4,11 @@
     (TODO: Object definitions, so that NV_User can be treated as a c struct, like in the real drivers. Everything needs to be 0x2000)
 */
 
-#pragma once 
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "architecture/nv3/nv3_state.h"
 
 #define NV3_MMIO_SIZE                                   0x1000000       // Max MMIO size
 
