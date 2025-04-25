@@ -2,20 +2,28 @@
 // Filename: nv3_core.c
 // Purpose: NV3/NV3T (Riva 128/128ZX) core functions (bringup, shutdown, mainloop)
 //
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <time.h>
 #include "architecture/nv3/nv3_ref.h"
 #include "core/nvcore.h"
-#include "dpmi.h"
-#include "nv3.h"
-#include "sys/farptr.h"
-#include "time.h"
+#include "architecture/nv3/nv3.h"
 
+// Test overclock time in seconds
+#define NV3_TEST_OVERCLOCK_TIME_BETWEEN_RECLOCKS 5
 
-/* TEMPORARY test  function to test certain hardcoded overclocks */
-bool nv3_init_test_overclock()
+// Default clock settings
+#define NV3_TEST_OVERCLOCK_BASE_13500 0x01A30B
+#define NV3_TEST_OVERCLOCK_BASE_14318 0x01C40E
+
+/* TEMPORARY test function to test certain hardcoded overclocks */
+bool nv3_init_test_overclock(void)
 {
     /* print out some helpful messages */
     printf("Basic clockspeed test (text mode: best case scenario)\n");
-    printf("The GPU will try to run for 60 seconds at each clock setting, gradually going from an underclock to an overclock. If it crashes, reboot, and the default 100Mhz MCLK will be restored.\n");
+    printf("The GPU will try to run for %d seconds at each clock setting, gradually going from an underclock to an overclock.\n", 
+           NV3_TEST_OVERCLOCK_TIME_BETWEEN_RECLOCKS);
     printf("Note: Some NVIDIA RIVA 128 ZX cards manufactured by TSMC run at 90Mhz and will have less overclocking potential!\n");
 
     /* read the straps to find our base clock value */
@@ -25,51 +33,44 @@ bool nv3_init_test_overclock()
         there are two possible clock bases here: 13.5 and 14.318 Mhz 
         we need two different values for our start menu
     */
-
     float clock_base = 13500000.0f;
     bool is_14318mhz_clock = false;     
 
-    if ((straps >> NV3_PSTRAPS_CRYSTAL) & 0x01)
-    {
+    if ((straps >> NV3_PSTRAPS_CRYSTAL) & 0x01) {
         clock_base = 14318180.0f;
         is_14318mhz_clock = true; 
     }
         
-    /* We vary the n-parameter of the MCLK to fine-tune the GPU clock speed. M can be used for large steps and P param can be used for very big steps */
-
+    /* We vary the n-parameter of the MCLK to fine-tune the GPU clock speed */
     uint32_t clock_n_start = 0xA3; 
     uint32_t clock_m = 0x0B, clock_p = 0x01;
 
-    if (is_14318mhz_clock)
-    {
+    if (is_14318mhz_clock) {
         clock_m = 0x0E;
-        //base clock_n is 0xC4, so the gpu will be biased more towards underclocking
+        // base clock_n is 0xC4, so the gpu will be biased more towards underclocking
         clock_n_start = 0xC4;
     }
 
-    for (int32_t clock_n = clock_n_start; clock_n <= 0xFF; clock_n++)
-    {
-        uclock_t start_clock = uclock();
+    for (int32_t clock_n = clock_n_start; clock_n <= 0xFF; clock_n++) {
+        time_t start_time = time(NULL);
 
         uint32_t final_clock = (clock_p << 16) 
-        | (clock_n << 8)
-        | clock_m;
+            | (clock_n << 8)
+            | clock_m;
 
-        //not speed critical, use a double
-        double megahertz = (clock_base * clock_n) / (clock_m << clock_p) / 1000000.0f;
+        // Calculate approximate MHz
+        double megahertz = (clock_base * clock_n) / (clock_m * (1 << clock_p)) / 1000000.0f;
 
-        printf("Trying MCLK = %.2f Mhz (NV_PRAMDAC_MPLL_COEFF = %08lx)...\n", megahertz, final_clock);
+        printf("Trying MCLK = %.2f Mhz (NV_PRAMDAC_MPLL_COEFF = 0x%08X)...\n", megahertz, final_clock);
 
         nv_mmio_write32(NV3_PRAMDAC_CLOCK_MEMORY, final_clock);
 
-        uclock_t this_clock = uclock();
-
-        // Sit in a spinloop until it's time to wake up
-        while (this_clock - start_clock < (UCLOCKS_PER_SEC * NV3_TEST_OVERCLOCK_TIME_BETWEEN_RECLOCKS))
-            this_clock = uclock();
+        // Sleep for the specified interval
+        sleep(NV3_TEST_OVERCLOCK_TIME_BETWEEN_RECLOCKS);
     }
 
     printf("We survived. Returning to 100Mhz...\n");
+    
     /* restore original clock */
     if (is_14318mhz_clock)
         nv_mmio_write32(NV3_PRAMDAC_CLOCK_MEMORY, NV3_TEST_OVERCLOCK_BASE_14318);
@@ -79,9 +80,9 @@ bool nv3_init_test_overclock()
     return true; 
 }
 
-bool nv3_init()
+bool nv3_init(void)
 {
-    // only top 8 bits actually matter
+    // Get BAR addresses from PCI config
     uint32_t bar0_base = pci_read_config_32(current_device.bus_number, current_device.function_number, PCI_CFG_OFFSET_BAR0);
     uint32_t bar1_base = pci_read_config_32(current_device.bus_number, current_device.function_number, PCI_CFG_OFFSET_BAR1);
 
@@ -89,57 +90,27 @@ bool nv3_init()
     bar0_base &= 0xFF000000;
     bar1_base &= 0xFF000000;
 
-    printf("NV3 - PCI BAR0 0x%08lX\n", bar0_base);
-    printf("NV3 - PCI BAR1 0x%08lX\n", bar1_base);
+    printf("NV3 - PCI BAR0 0x%08X\n", bar0_base);
+    printf("NV3 - PCI BAR1 0x%08X\n", bar1_base);
     
-    /* We need to allocate an LDT for this */
-    /* So start by allocating a physical mapping. */
-
-    __dpmi_meminfo meminfo_bar0 = {0};
-    __dpmi_meminfo meminfo_bar1_ramin = {0};
-    __dpmi_meminfo meminfo_bar1_dfb = {0};
-
-    meminfo_bar0.address = bar0_base;
-    meminfo_bar0.size = NV3_MMIO_SIZE;
-    meminfo_bar1_ramin.address = bar1_base + 0xC00000;
-    meminfo_bar1_ramin.size = NV3_RAMIN_SIZE;
-    meminfo_bar1_dfb.address = bar1_base;
-    meminfo_bar1_dfb.size = NV3_VRAM_SIZE_4MB; //this will change
-
-    __dpmi_physical_address_mapping(&meminfo_bar0);
-    __dpmi_physical_address_mapping(&meminfo_bar1_ramin);
-    __dpmi_physical_address_mapping(&meminfo_bar1_dfb);
-
-    
-    printf("GPU Init: Mapping BAR0 MMIO...\n");
-
-    /* Set up two LDTs, we don't need one for ramin, because, it's just a part of bar1 we map differently */
-    current_device.bar0_selector = __dpmi_allocate_ldt_descriptors(1);
-    __dpmi_set_segment_base_address(current_device.bar0_selector, meminfo_bar0.address);
-    __dpmi_set_segment_limit(current_device.bar0_selector, NV3_MMIO_SIZE - 1);
-
-    printf("GPU Init: Mapping BAR1 (DFB / RAMIN)...\n");
-
-    current_device.bar1_selector = __dpmi_allocate_ldt_descriptors(1);
-    __dpmi_set_segment_base_address(current_device.bar1_selector, meminfo_bar1_dfb.address);
-    __dpmi_set_segment_limit(current_device.bar1_selector, NV3_MMIO_SIZE - 1); // ultimately the same size
+    // Initialize memory mappings
+    if (!init_mmio_mappings(bar0_base, bar1_base)) {
+        printf("Failed to initialize MMIO mappings\n");
+        return false;
+    }
 
     current_device.nv_pmc_boot_0 = nv_mmio_read32(NV3_PMC_BOOT);
     current_device.nv_pfb_boot_0 = nv_mmio_read32(NV3_PFB_BOOT);
 
-    /* TODO: Read our Dumb Framebuffer */
     printf("I'm a Riva 128! Information: \n");
-    printf("NV_PMC_BOOT_0           = %08lX\n", current_device.nv_pmc_boot_0);
-    printf("NV_PFB_BOOT_0           = %08lX\n", current_device.nv_pfb_boot_0);
+    printf("NV_PMC_BOOT_0           = 0x%08X\n", current_device.nv_pmc_boot_0);
+    printf("NV_PFB_BOOT_0           = 0x%08X\n", current_device.nv_pfb_boot_0);
 
-    /* 
-        Determine the amount of Video RAM 
-        In theory this could be a shared function between all nv gpus, but in reality i'm not so sure
-    */
-    uint32_t ram_amount_value = (current_device.nv_pfb_boot_0 >> NV3_PFB_BOOT_RAM_AMOUNT) & 0x03; 
-    bool ram_extension_8mb = (current_device.nv_pfb_boot_0 >> NV3_PFB_BOOT_RAM_EXTENSION) & 0x01;      // Needed for Riva128 ZX
+    /* Determine the amount of Video RAM */
+    uint32_t ram_amount_value = (current_device.nv_pfb_boot_0 >> NV3_PFB_BOOT_RAM_AMOUNT) & 0x03;
+    bool ram_extension_8mb = (current_device.nv_pfb_boot_0 >> NV3_PFB_BOOT_RAM_EXTENSION) & 0x01;
     
-    /* Read in the amount of video memory from the NV_PFB_BOOT_0 register. Note: 0 without RAM_EXTENSION is 1MB!!! which was never even released... */
+    /* Read in the amount of video memory from the NV_PFB_BOOT_0 register */
     if (!ram_amount_value && ram_extension_8mb == NV3_PFB_BOOT_RAM_EXTENSION_8MB)       // 8MB (Riva 128 ZX)
         current_device.vram_amount = NV3_VRAM_SIZE_8MB;
     else if (ram_amount_value == NV3_PFB_BOOT_RAM_AMOUNT_4MB)                           // 4MB (Most Riva 128s)
@@ -149,31 +120,30 @@ bool nv3_init()
     else if (!ram_amount_value && ram_extension_8mb == NV3_PFB_BOOT_RAM_EXTENSION_NONE) // 1MB (never existed)
         current_device.vram_amount = NV3_VRAM_SIZE_1MB;
 
-    printf("Video RAM Size          = %lu MB\n", (current_device.vram_amount / 1048576));
+    printf("Video RAM Size          = %u MB\n", (unsigned int)(current_device.vram_amount / 1048576));
 
     /* Read in the straps */
     current_device.straps = nv_mmio_read32(NV3_PSTRAPS);
-    printf("Straps                  = %08lX\n", current_device.straps);
+    printf("Straps                  = 0x%08X\n", current_device.straps);
 
     uint32_t vpll = nv_mmio_read32(NV3_PRAMDAC_CLOCK_PIXEL);
     uint32_t mpll = nv_mmio_read32(NV3_PRAMDAC_CLOCK_MEMORY);
     
-    //todo: MHz
-    printf("Pixel Clock Coefficient = %08lX\n", vpll);
-    printf("Memory Clock Coefficient= %08lX\n", mpll);
+    printf("Pixel Clock Coefficient = 0x%08X\n", vpll);
+    printf("Memory Clock Coefficient= 0x%08X\n", mpll);
 
     /* Power up all GPU subsystems */
     printf("Enabling all GPU subsystems (0x11111111 -> NV3_PMC_ENABLE)...");
     nv_mmio_write32(NV3_PMC_ENABLE, 0x11111111);
     printf("Done!\n");
 
-    /* Enable interrupts (test) */
+    /* Enable interrupts */
     printf("Enabling interrupts...");
     nv_mmio_write32(NV3_PMC_INTERRUPT_ENABLE, (NV3_PMC_INTERRUPT_ENABLE_HARDWARE | NV3_PMC_INTERRUPT_ENABLE_SOFTWARE));
     printf("Done!\n");
  
     if (nv3_init_test_overclock())
-        printf("Passed insane clock torture test\n");
+        printf("Passed clock stability test\n");
 
     return true; 
 }

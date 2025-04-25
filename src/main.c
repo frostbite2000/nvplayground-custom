@@ -1,47 +1,81 @@
-#include <bios.h>
-#include <dpmi.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/nearptr.h>
+#include <string.h>
+#include <signal.h>
+#include <unistd.h>
+#include "nvplayground.h"
+#include "core/nvcore.h"
+#include "core/pci/pci.h"
 
-#include <nvplayground.h>
-#include <core/nvcore.h>
-
-#define GDB_IMPLEMENTATION
-#include "gdbstub.h"
-
-void set_video_mode(int mode) {
-  __dpmi_regs regs = {0};
-  regs.x.ax = mode;
-  __dpmi_int(0x10, &regs);
+// Signal handling
+static void cleanup(void);
+static void signal_handler(int sig)
+{
+    printf("\nCaught signal %d, cleaning up and exiting...\n", sig);
+    cleanup();
+    exit(1);
 }
 
-int main(void) 
+// Main application cleanup
+static void cleanup(void)
 {
-	_gdb_start(); // gdb_start but it doesn't actually break into the debugger automatically
+    // Clean up hardware resources
+    cleanup_mmio_mappings();
+    pci_cleanup();
+}
 
-	printf(APP_SIGNON_STRING);
+int main(int argc, char *argv[])
+{
+    // Register signal handlers
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+    
+    // Print welcome message
+    printf(APP_SIGNON_STRING);
 
-	if (!pci_bios_is_present())
-		exit(1);
+#ifdef USE_VIRTUAL_PCI    
+    printf("Running with virtual PCI device (no hardware access)\n");
+#else
+    printf("Running with real hardware PCI access\n");
+#endif
 
-	if (!nv_detect())
-		exit(2);
-
-	/* Make sure the GPU is supported */
-	if (!current_device.device_info.init_function)
-	{
-		printf("This GPU is not yet supported :(");
-		exit(3);
-	}
-
-	if (!current_device.device_info.init_function())
-		exit(4);
-	
-  	//__djgpp_nearptr_enable(); for dos rom
-	// kbhit() etc
-
-  	gdb_checkpoint();
-
- 	return 0;
+    // Initialize PCI subsystem
+    if (!pci_init()) {
+        fprintf(stderr, "Failed to initialize PCI subsystem\n");
+        return 1;
+    }
+    
+    // Detect supported NVIDIA GPU
+    if (!nv_detect()) {
+        fprintf(stderr, "No supported NVIDIA GPU found\n");
+        pci_cleanup();
+        return 2;
+    }
+    
+    // Make sure the GPU is supported
+    if (!current_device.device_info.init_function) {
+        fprintf(stderr, "This GPU is not yet supported :(\n");
+        cleanup();
+        return 3;
+    }
+    
+    // Initialize the GPU
+    printf("Initializing GPU: %s\n", current_device.device_info.name);
+    if (!current_device.device_info.init_function()) {
+        fprintf(stderr, "Failed to initialize GPU\n");
+        cleanup();
+        return 4;
+    }
+    
+    printf("\nGPU initialized successfully!\n");
+    printf("Press Ctrl+C to exit...\n");
+    
+    // Main loop - in a real application, you would handle events here
+    while (1) {
+        sleep(1);
+    }
+    
+    // Cleanup and exit
+    cleanup();
+    return 0;
 }

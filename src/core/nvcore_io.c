@@ -1,81 +1,195 @@
-#include "nvcore.h"
-#include "sys/farptr.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include "nvplayground.h"
+#include "core/nvcore.h"
 
-//
-// MMIO Functinos
-//
+#ifndef USE_VIRTUAL_PCI
 
-/* Read 8-bit value from the MMIO */
-uint8_t nv_mmio_read8(uint32_t offset)
+static int mem_fd = -1;
+static void *mmio_mapped_base = NULL;
+static void *vram_mapped_base = NULL;
+static void *ramin_mapped_base = NULL;
+
+bool init_mmio_mappings(uint32_t bar0_base, uint32_t bar1_base)
 {
-    return _farpeekb(current_device.bar0_selector, offset);
+    printf("Initializing memory mappings with real hardware access\n");
+    
+    // Open /dev/mem for physical memory mapping
+    mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
+    if (mem_fd == -1) {
+        perror("Failed to open /dev/mem");
+        return false;
+    }
+    
+    // Map BAR0 (MMIO registers)
+    mmio_mapped_base = mmap(0, 0x1000000, PROT_READ | PROT_WRITE, MAP_SHARED,
+                          mem_fd, bar0_base);
+    if (mmio_mapped_base == MAP_FAILED) {
+        perror("Failed to map BAR0 MMIO registers");
+        close(mem_fd);
+        return false;
+    }
+    
+    // Map BAR1 VRAM area
+    vram_mapped_base = mmap(0, 0x800000, PROT_READ | PROT_WRITE, MAP_SHARED,
+                          mem_fd, bar1_base);
+    if (vram_mapped_base == MAP_FAILED) {
+        perror("Failed to map BAR1 VRAM");
+        munmap(mmio_mapped_base, 0x1000000);
+        close(mem_fd);
+        return false;
+    }
+    
+    // Map BAR1 RAMIN area (starts at 0xC00000 offset from BAR1 base)
+    ramin_mapped_base = mmap(0, 0x400000, PROT_READ | PROT_WRITE, MAP_SHARED,
+                           mem_fd, bar1_base + 0xC00000);
+    if (ramin_mapped_base == MAP_FAILED) {
+        perror("Failed to map BAR1 RAMIN");
+        munmap(vram_mapped_base, 0x800000);
+        munmap(mmio_mapped_base, 0x1000000);
+        close(mem_fd);
+        return false;
+    }
+    
+    // Store mappings in the current_device structure
+    current_device.mmio_mapping = mmio_mapped_base;
+    current_device.vram_mapping = vram_mapped_base;
+    current_device.ramin_mapping = ramin_mapped_base;
+    
+    printf("Memory mappings initialized successfully\n");
+    return true;
 }
 
-/* Read 32-bit value from the MMIO */
-uint32_t nv_mmio_read32(uint32_t offset)
+void cleanup_mmio_mappings(void)
 {
-    return _farpeekl(current_device.bar0_selector, offset);
+    if (ramin_mapped_base) {
+        munmap(ramin_mapped_base, 0x400000);
+        ramin_mapped_base = NULL;
+        current_device.ramin_mapping = NULL;
+    }
+    
+    if (vram_mapped_base) {
+        munmap(vram_mapped_base, 0x800000);
+        vram_mapped_base = NULL;
+        current_device.vram_mapping = NULL;
+    }
+    
+    if (mmio_mapped_base) {
+        munmap(mmio_mapped_base, 0x1000000);
+        mmio_mapped_base = NULL;
+        current_device.mmio_mapping = NULL;
+    }
+    
+    if (mem_fd != -1) {
+        close(mem_fd);
+        mem_fd = -1;
+    }
+    
+    printf("Memory mappings cleaned up\n");
 }
 
-void nv_mmio_write8(uint32_t offset, uint8_t val)
+uint32_t nv_mmio_read32(uint32_t addr)
 {
-    _farpokeb(current_device.bar0_selector, offset, val);
+    volatile uint32_t *ptr;
+    
+    if (addr < 0x1000000) {
+        // MMIO access
+        if (!mmio_mapped_base) {
+            printf("Error: Attempted MMIO read before initialization\n");
+            return 0xFFFFFFFF;
+        }
+        ptr = (volatile uint32_t *)((uint8_t *)mmio_mapped_base + addr);
+    } 
+    else if (addr >= 0x1000000 && addr < 0x1800000) {
+        // VRAM access
+        if (!vram_mapped_base) {
+            printf("Error: Attempted VRAM read before initialization\n");
+            return 0xFFFFFFFF;
+        }
+        ptr = (volatile uint32_t *)((uint8_t *)vram_mapped_base + (addr - 0x1000000));
+    }
+    else if (addr >= 0x1C00000 && addr < 0x2000000) {
+        // RAMIN access
+        if (!ramin_mapped_base) {
+            printf("Error: Attempted RAMIN read before initialization\n");
+            return 0xFFFFFFFF;
+        }
+        ptr = (volatile uint32_t *)((uint8_t *)ramin_mapped_base + (addr - 0x1C00000));
+    }
+    else {
+        printf("Error: Invalid MMIO read address: 0x%08X\n", addr);
+        return 0xFFFFFFFF;
+    }
+    
+    return *ptr;
 }
 
-void nv_mmio_write32(uint32_t offset, uint32_t val)
+void nv_mmio_write32(uint32_t addr, uint32_t value)
 {
-    _farpokel(current_device.bar0_selector, offset, val);
+    volatile uint32_t *ptr;
+    
+    if (addr < 0x1000000) {
+        // MMIO access
+        if (!mmio_mapped_base) {
+            printf("Error: Attempted MMIO write before initialization\n");
+            return;
+        }
+        ptr = (volatile uint32_t *)((uint8_t *)mmio_mapped_base + addr);
+    } 
+    else if (addr >= 0x1000000 && addr < 0x1800000) {
+        // VRAM access
+        if (!vram_mapped_base) {
+            printf("Error: Attempted VRAM write before initialization\n");
+            return;
+        }
+        ptr = (volatile uint32_t *)((uint8_t *)vram_mapped_base + (addr - 0x1000000));
+    }
+    else if (addr >= 0x1C00000 && addr < 0x2000000) {
+        // RAMIN access
+        if (!ramin_mapped_base) {
+            printf("Error: Attempted RAMIN write before initialization\n");
+            return;
+        }
+        ptr = (volatile uint32_t *)((uint8_t *)ramin_mapped_base + (addr - 0x1C00000));
+    }
+    else {
+        printf("Error: Invalid MMIO write address: 0x%08X\n", addr);
+        return;
+    }
+    
+    *ptr = value;
 }
 
-//
-// DFB Functions
-//
+#else
 
-/* Read 8-bit value from the DFB */
-uint8_t nv_dfb_read8(uint32_t offset)
+// In virtual mode, we use the functions from virtual_pci.c
+extern uint32_t virtual_mmio_read32(uint32_t addr);
+extern void virtual_mmio_write32(uint32_t addr, uint32_t value);
+
+bool init_mmio_mappings(uint32_t bar0_base, uint32_t bar1_base)
 {
-    return _farpeekb(current_device.bar1_selector, offset);
+    printf("Using virtual MMIO mappings (no real hardware access)\n");
+    return true;  // Nothing to do, virtual mappings already set up
 }
 
-/* Read 16-bit value from the DFB */
-uint16_t nv_dfb_read16(uint32_t offset)
+void cleanup_mmio_mappings(void)
 {
-    return _farpeekw(current_device.bar1_selector, offset);
+    // Nothing to do, virtual mappings cleaned up in virtual_pci_cleanup
 }
 
-/* Read 32-bit value from the DFB */
-uint32_t nv_dfb_read32(uint32_t offset)
+uint32_t nv_mmio_read32(uint32_t addr)
 {
-    return _farpeekl(current_device.bar1_selector, offset);
+    return virtual_mmio_read32(addr);
 }
 
-/* Write 8-bit value to the DFB */
-void nv_dfb_write8(uint32_t offset, uint8_t val)
+void nv_mmio_write32(uint32_t addr, uint32_t value)
 {
-    _farpokeb(current_device.bar1_selector, offset, val);
+    virtual_mmio_write32(addr, value);
 }
 
-/* Write 16-bit value to the DFB */
-void nv_dfb_write16(uint32_t offset, uint16_t val)
-{
-    _farpokew(current_device.bar1_selector, offset, val);
-}
-
-void nv_dfb_write32(uint32_t offset, uint32_t val)
-{
-    _farpokel(current_device.bar1_selector, offset, val);
-}
-
-/* Read 32-bit value from RAMIN */
-uint32_t nv_ramin_read32(uint32_t offset)
-{
-    printf("nv_ramin_read32 NOT YET IMPLEMENTED");
-    return 0x00;
-}
-
-void nv_ramin_write32(uint32_t offset, uint32_t val)
-{
-    printf("nv_ramin_write32 NOT YET IMPLEMENTED");
-    return;
-}
-
+#endif // USE_VIRTUAL_PCI
